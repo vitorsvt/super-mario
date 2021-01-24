@@ -5,7 +5,7 @@ from game import Level
 
 def main():
     engine = Engine((256, 224), 3)
-    level = Level()
+    level = Level("level.json")
     engine.root = level
     engine.start()
 

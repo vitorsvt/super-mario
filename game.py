@@ -1,17 +1,32 @@
 import pygame as pg
-from nodes import Root
+import utils
+from nodes import Root, Tileset, Tilemap
 
 
 class Level(Root):
-    def __init__(self):
-        self.surface = pg.Surface((256, 224))
-        self.count = 150
+    def __init__(self, file):
+        self.tilemap = self.load_tiled(file)
+        self.surface = pg.Surface(self.tilemap.surface.get_size(), pg.HWSURFACE + pg.SRCALPHA)
+        self.surface.blit(self.tilemap.surface, (0, 0))
+
+    def load_tiled(self, file):
+        data = utils.load_json(file)
+        tileset_data = data["tilesets"][0]
+        tileset = Tileset(
+            tileset_data["image"], tileset_data["tilewidth"],
+            tileset_data["tiles"], tileset_data["margin"],
+            tileset_data["spacing"], tileset_data["transparentcolor"]
+        )
+        tilemap_data = data["layers"][0]
+        tilemap = Tilemap(
+            tileset,
+            [tilemap_data["width"], tilemap_data["height"]],
+            tilemap_data["data"]
+        )
+        return tilemap
 
     def input(self, events):
-        if events.is_action_just_pressed("jump"):
-            print("jump")
-        for key in ["up", "down", "left", "right"]:
-            if events.is_action_pressed(key): print(key)
+        pass
 
     def physics(self, dt):
         pass
@@ -20,12 +35,5 @@ class Level(Root):
         pass
 
     def draw(self, surface):
-        if self.count == 0:
-            self.surface.fill((255,0,0))
-            self.count = 150
-        elif self.count == 50:
-            self.surface.fill((0,255,0))
-        elif self.count == 100:
-            self.surface.fill((0,0,255))
-        self.count -= 1
-        surface.blit(self.surface, (0,0))
+        surface.fill((0,120,255))
+        surface.blit(self.surface, (0, -200))
