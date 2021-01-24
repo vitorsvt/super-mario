@@ -34,6 +34,7 @@ class Tilemap:
         self.tileset = tileset
         self.tiles = tiles
         self.surface = pg.Surface((self.width * tileset.size, self.height * tileset.size), pg.HWSURFACE + pg.SRCALPHA)
+        self.size = self.surface.get_size()
 
         for j in range(self.height):
             for i in range(self.width):
@@ -41,3 +42,155 @@ class Tilemap:
                 if id != 0:
                     tile = tileset.tiles[id - 1]
                     self.surface.blit(tile, (i * tileset.size, j * tileset.size))
+
+    def get_info_at(self, x, y):
+        return self.get_info(self.get_at(x, y))
+
+    def get_at(self, x, y):
+        if 0 > x or x >= self.width or 0 > y or y >= self.height:
+            return
+        return self.tiles[y * self.width + x]
+
+    def get_info(self, tile):
+        if tile:
+            return self.tileset.data.get(tile - 1)
+        else:
+            return
+
+
+class Spritesheet:
+    def __init__(self, texture, size):
+        self.texture = pg.image.load(texture).convert_alpha()
+        self.sprites = []
+        width, height = size
+        for j in range(0, self.texture.get_height(), height):
+            for i in range(0, self.texture.get_width(), width):
+                clip = pg.Rect(i, j, width, height)
+                self.sprites.append(self.texture.subsurface(clip))
+
+
+class Sprite:
+    def __init__(self, texture):
+        self.texture = pg.image.load(texture).convert_alpha() if texture else None
+        self.flip_h = False
+
+    def draw(self, surface, position = (0, 0)):
+        surface.blit(pg.transform.flip(self.texture, self.flip_h, False), position)
+
+
+class AnimatedSprite(Sprite):
+    def __init__(self, spritesheet, frames, default):
+        Sprite.__init__(self, None)
+        self.spritesheet = spritesheet
+        self.animations = {}
+        self.current = None
+        self.queue = default
+        self.frame = 0
+
+        for animation, data in frames.items():
+            self.animations[animation] = []
+            for section in data:
+                self.animations[animation].extend([section["frame"]] * section["duration"])
+
+    def next(self):
+        if self.queue != self.current:
+            self.current = self.queue
+            self.frame = 0
+        elif self.frame >= len(self.animations[self.current]):
+            self.frame = 0
+        self.texture = self.spritesheet.sprites[self.animations[self.current][self.frame]]
+        self.frame += 1
+
+    def play(self, animation):
+        self.queue = animation
+
+
+class Camera:
+    def __init__(self, size, limits):
+        self.shape = pg.Rect(0, 200, size[0], size[1])
+        self.limits = limits
+
+    def snap_limits(self):
+        h_limit = False
+        v_limit = False
+        if self.shape.x < 0:
+            self.shape.x = 0
+            h_limit = True
+        elif self.shape.right > self.limits[0]:
+            self.shape.right = self.limits[0]
+            h_limit = True
+        if self.shape.y < 0:
+            self.shape.y = 0
+            v_limit = True
+        elif self.shape.bottom > self.limits[1]:
+            self.shape.bottom = self.limits[1]
+            v_limit = True
+        return h_limit, v_limit
+
+    def draw(self, surface, layers):
+        for layer in layers:
+            surface.blit(layer.subsurface(self.shape), (0,0))
+
+
+class Kinematic:
+    def __init__(self, shape, position = pg.Vector2(0,0)):
+        self.shape = shape
+        self.position = position
+        self.grounded = False
+        self.velocity = pg.Vector2(0, 0)
+
+    def move_and_collide(self, dt, tilemap):
+        self.position.x += self.velocity[0]
+        self.shape.x = int(self.position.x)
+
+        if self.velocity[0] > 0:
+            points = [self.shape.topright, self.shape.midright, self.shape.bottomright]
+            for point in points:
+                x = point[0] // 16
+                y = point[1] // 16
+                tile = tilemap.get_info_at(x, y)
+                if tile and tile["type"] == "solid":
+                    if self.shape.right >= x * 16 and self.shape.bottom != y * 16 and self.shape.top != y * 16 + 16:
+                        self.shape.right = x * 16
+                        self.position.x = self.shape.x
+                        self.velocity[0] = 0
+        else:
+            points = [self.shape.topleft, self.shape.midleft, self.shape.bottomleft]
+            for point in points:
+                x = point[0] // 16
+                y = point[1] // 16
+                tile = tilemap.get_info_at(x, y)
+                if tile and tile["type"] == "solid":
+                    if self.shape.left <= x * 16 + 16 and self.shape.bottom != y * 16 and self.shape.top != y * 16 + 16:
+                        self.shape.left = x * 16 + 16
+                        self.position.x = self.shape.x
+                        self.velocity[0] = 0
+
+        self.position.y += self.velocity[1]
+        self.shape.y = int(self.position.y)
+
+        colliders = []
+        self.grounded = False
+        if self.velocity[1] > 0:
+            points = [self.shape.bottomleft, self.shape.midbottom, self.shape.bottomright]
+            for point in points:
+                x = point[0] // 16
+                y = point[1] // 16
+                tile = tilemap.get_info_at(x, y)
+                if tile and tile["type"] == "solid":
+                    if self.shape.bottom >= y * 16 and self.shape.right != x * 16 and self.shape.left != x * 16 + 16:
+                        self.shape.bottom = y * 16
+                        self.grounded = True
+                        self.position.y = self.shape.y
+                        self.velocity[1] = 0
+        else:
+            points = [self.shape.topleft, self.shape.midtop, self.shape.topright]
+            for point in points:
+                x = point[0] // 16
+                y = point[1] // 16
+                tile = tilemap.get_info_at(x, y)
+                if tile and tile["type"] == "solid":
+                    if self.shape.top <= y * 16 + 16 and self.shape.right != x * 16 and self.shape.left != x * 16 + 16:
+                        self.shape.top = y * 16 + 16
+                        self.position.y = self.shape.y
+                        self.velocity[1] = 0

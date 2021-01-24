@@ -12,6 +12,7 @@ class Engine:
             (resolution[0] * scale, resolution[1] * scale), 0, 32
         )
 
+        self.framerate = 60
         self.clock = pg.time.Clock()
         self.dt = 0
 
@@ -30,7 +31,7 @@ class Engine:
 
     def tick(self):
         pg.display.update()
-        self.dt = (self.clock.tick(60) * 0.001) * 60
+        self.dt = (self.clock.tick(self.framerate) * 0.001) * self.framerate
 
 
 class Events:
@@ -47,9 +48,11 @@ class Events:
         }
         self.pressed = []
         self.just_pressed = []
+        self.just_released = []
 
     def update(self):
         self.just_pressed = []
+        self.just_released = []
         for event in pg.event.get():
             if event.type is pg.QUIT:
                 pg.quit()
@@ -61,6 +64,12 @@ class Events:
                     if action not in self.just_pressed: self.just_pressed.append(action)
                 else:
                     if action in self.pressed: self.pressed.remove(action)
+                    if action not in self.just_released: self.just_released.append(action)
+
+    def is_action_just_released(self, action):
+        if action in self.just_released:
+            return True
+        return False
 
     def is_action_pressed(self, action):
         if action in self.pressed:
