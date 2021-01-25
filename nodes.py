@@ -15,12 +15,63 @@ class Root:
         pass
 
 
+class Font:
+    def __init__(self, file, size, characters):
+        self.characters = {}
+        self.size = size
+        texture = pg.image.load(file).convert_alpha()
+        for x, char in enumerate(characters):
+            clip = pg.Rect(x * size[0], 0, size[0], size[1])
+            self.characters[char] = texture.subsurface(clip)
+
+    def write(self, text):
+        surface = pg.Surface((self.size[0] * len(text), self.size[1]), pg.HWSURFACE + pg.SRCALPHA)
+        for x, char in enumerate(text):
+            surface.blit(self.characters[char], (x * self.size[0], 0))
+        return surface
+
+
+class StateMachine:
+    def __init__(self, states, default):
+        self.states = states
+        self.state = default
+
+    def set_state(self, state):
+        if self.state != state and state in self.states:
+            self.exit_state()
+            self.state = state
+            self.enter_state()
+
+    def enter_state(self):
+        pass
+
+    def exit_state(self):
+        pass
+
+    def process(self):
+        pass
+
+
+class Tile:
+    def __init__(self, data):
+        self.type = data.get("type")
+        self.tags = []
+        properties = data.get("properties")
+        if properties:
+            for property in properties:
+                if property["type"] == "bool":
+                    self.tags.append(property["name"])
+
+
+
 class Tileset:
     def __init__(self, texture, size, data, margin = 0, spacing = 0, colorkey = None):
         self.texture = pg.image.load(texture).convert_alpha()
         self.texture.set_colorkey(colorkey)
         self.size = size
-        self.data = {tile["id"]: {"type": tile["type"]} for tile in data}
+        self.data = {}
+        for tile in data:
+            self.data[tile["id"]] = Tile(tile)
         self.tiles = []
         for j in range(margin, self.texture.get_height(), size + spacing):
             for i in range(margin, self.texture.get_width(), size + spacing):
@@ -138,8 +189,17 @@ class Kinematic:
         self.position = position
         self.grounded = False
         self.velocity = pg.Vector2(0, 0)
+        self.colliding = []
+
+    def move(self, dt):
+        self.position.x += self.velocity[0]
+        self.shape.x = int(self.position.x)
+        self.position.y += self.velocity[1]
+        self.shape.y = int(self.position.y)
 
     def move_and_collide(self, dt, tilemap):
+        self.colliding = []
+
         self.position.x += self.velocity[0]
         self.shape.x = int(self.position.x)
 
@@ -149,7 +209,7 @@ class Kinematic:
                 x = point[0] // 16
                 y = point[1] // 16
                 tile = tilemap.get_info_at(x, y)
-                if tile and tile["type"] == "solid":
+                if tile and tile.type == "solid":
                     if self.shape.right >= x * 16 and self.shape.bottom != y * 16 and self.shape.top != y * 16 + 16:
                         self.shape.right = x * 16
                         self.position.x = self.shape.x
@@ -160,7 +220,7 @@ class Kinematic:
                 x = point[0] // 16
                 y = point[1] // 16
                 tile = tilemap.get_info_at(x, y)
-                if tile and tile["type"] == "solid":
+                if tile and tile.type == "solid":
                     if self.shape.left <= x * 16 + 16 and self.shape.bottom != y * 16 and self.shape.top != y * 16 + 16:
                         self.shape.left = x * 16 + 16
                         self.position.x = self.shape.x
@@ -177,8 +237,13 @@ class Kinematic:
                 x = point[0] // 16
                 y = point[1] // 16
                 tile = tilemap.get_info_at(x, y)
-                if tile and tile["type"] == "solid":
-                    if self.shape.bottom >= y * 16 and self.shape.right != x * 16 and self.shape.left != x * 16 + 16:
+                if tile:
+                    if tile.type == "solid" and self.shape.bottom >= y * 16 and self.shape.right != x * 16 and self.shape.left != x * 16 + 16:
+                        self.shape.bottom = y * 16
+                        self.grounded = True
+                        self.position.y = self.shape.y
+                        self.velocity[1] = 0
+                    elif tile.type == "semisolid" and y * 16 + 8 >= self.shape.bottom >= y * 16 and self.shape.right != x * 16 and self.shape.left != x * 16 + 16:
                         self.shape.bottom = y * 16
                         self.grounded = True
                         self.position.y = self.shape.y
@@ -189,7 +254,7 @@ class Kinematic:
                 x = point[0] // 16
                 y = point[1] // 16
                 tile = tilemap.get_info_at(x, y)
-                if tile and tile["type"] == "solid":
+                if tile and tile.type == "solid":
                     if self.shape.top <= y * 16 + 16 and self.shape.right != x * 16 and self.shape.left != x * 16 + 16:
                         self.shape.top = y * 16 + 16
                         self.position.y = self.shape.y
