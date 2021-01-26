@@ -32,23 +32,19 @@ class Font:
 
 
 class StateMachine:
-    def __init__(self, states, default):
-        self.states = states
-        self.state = default
+    def __init__(self, state):
+        self.state = state
 
     def set_state(self, state):
-        if self.state != state and state in self.states:
+        if self.state != state:
             self.exit_state()
             self.state = state
             self.enter_state()
 
-    def enter_state(self):
-        pass
-
     def exit_state(self):
         pass
 
-    def process(self):
+    def enter_state(self):
         pass
 
 
@@ -62,6 +58,8 @@ class Tile:
                 if property["type"] == "bool":
                     self.tags.append(property["name"])
 
+    def has(self, tag):
+        return tag in self.tags
 
 
 class Tileset:
@@ -184,12 +182,16 @@ class Camera:
 
 
 class Kinematic:
-    def __init__(self, shape, position = pg.Vector2(0,0)):
-        self.shape = shape
-        self.position = position
+    def __init__(self, size, position, gravity = True):
+        self.shape = pg.Rect(position[0], position[1], size[0], size[1])
+        self.position = pg.Vector2(position[0], position[1])
+        self.velocity = pg.Vector2(0)
         self.grounded = False
-        self.velocity = pg.Vector2(0, 0)
-        self.colliding = []
+        self.gravity = gravity
+
+    def apply_gravity(self):
+        if self.gravity:
+            self.velocity.y = min(self.velocity.y + 0.2, 10)
 
     def move(self, dt):
         self.position.x += self.velocity[0]
@@ -214,6 +216,7 @@ class Kinematic:
                         self.shape.right = x * 16
                         self.position.x = self.shape.x
                         self.velocity[0] = 0
+
         else:
             points = [self.shape.topleft, self.shape.midleft, self.shape.bottomleft]
             for point in points:
@@ -228,26 +231,32 @@ class Kinematic:
 
         self.position.y += self.velocity[1]
         self.shape.y = int(self.position.y)
-
-        colliders = []
+        snap = self.grounded
         self.grounded = False
+
         if self.velocity[1] > 0:
             points = [self.shape.bottomleft, self.shape.midbottom, self.shape.bottomright]
             for point in points:
                 x = point[0] // 16
-                y = point[1] // 16
+                if snap:
+                    y = (point[1] + 4) // 16
+                    bottom = self.shape.bottom + 4
+                else:
+                    y = point[1] // 16
+                    bottom = self.shape.bottom
                 tile = tilemap.get_info_at(x, y)
                 if tile:
-                    if tile.type == "solid" and self.shape.bottom >= y * 16 and self.shape.right != x * 16 and self.shape.left != x * 16 + 16:
+                    if tile.type == "solid" and bottom >= y * 16 and self.shape.right != x * 16 and self.shape.left != x * 16 + 16:
                         self.shape.bottom = y * 16
                         self.grounded = True
                         self.position.y = self.shape.y
                         self.velocity[1] = 0
-                    elif tile.type == "semisolid" and y * 16 + 8 >= self.shape.bottom >= y * 16 and self.shape.right != x * 16 and self.shape.left != x * 16 + 16:
+                    elif tile.type == "semisolid" and y * 16 + 8 >= bottom >= y * 16 and self.shape.right != x * 16 and self.shape.left != x * 16 + 16:
                         self.shape.bottom = y * 16
                         self.grounded = True
                         self.position.y = self.shape.y
                         self.velocity[1] = 0
+
         else:
             points = [self.shape.topleft, self.shape.midtop, self.shape.topright]
             for point in points:

@@ -38,13 +38,12 @@ class FollowCamera(Camera):
 
 class Level(Root):
     def __init__(self, file):
-        self.tilemap = self.load_tiled(file)
-        self.player = Player()
+        self.tilemap, player = self.load_tiled(file)
+        self.player = Player((player[0], player[1]))
         self.camera = FollowCamera(self.player, (256, 224), self.tilemap.size)
 
         self.surface = pg.Surface(self.tilemap.size, pg.HWSURFACE + pg.SRCALPHA)
         self.entities = pg.Surface(self.tilemap.size, pg.HWSURFACE + pg.SRCALPHA)
-
 
         self.surface.blit(self.tilemap.surface, (0, 0))
 
@@ -62,12 +61,14 @@ class Level(Root):
             [tilemap_data["width"], tilemap_data["height"]],
             tilemap_data["data"]
         )
-        return tilemap
+        player = data["layers"][1]["objects"][0]
+        return tilemap, (player["x"], player["y"])
 
     def input(self, events):
         self.player.input(events)
 
     def physics(self, dt):
+        self.player.apply_gravity()
         self.player.physics(dt, self.tilemap)
 
     def process(self):
@@ -81,82 +82,11 @@ class Level(Root):
         self.camera.draw(surface, [self.surface, self.entities])
 
 
-class PlayerSM(StateMachine):
-    def __init__(self, player):
-        StateMachine.__init__(self, [
-            "idle", "walk", "run", "max_speed", "skid",
-            "jump", "fall",
-            "climb_idle", "climb_move",
-            "dead"
-        ], "idle")
-        self.player = player
-
-    def process(self):
-        if self.state == "idle":
-            if self.player.velocity[1] > 0:
-                self.set_state("fall")
-            elif self.player.velocity[1] < 0:
-                self.set_state("jump")
-            elif self.player.velocity[0] != 0:
-                self.set_state("walk")
-        elif self.state == "walk":
-            if self.player.velocity[1] > 0:
-                self.set_state("fall")
-            elif self.player.velocity[1] < 0:
-                self.set_state("jump")
-            elif self.player.velocity[0] > 0 and self.player.input_velocity[0] < 0:
-                self.set_state("skid")
-            elif self.player.velocity[0] < 0 and self.player.input_velocity[0] > 0:
-                self.set_state("skid")
-            elif self.player.velocity[0] == 0:
-                self.set_state("idle")
-        elif self.state == "fall":
-            if self.player.grounded:
-                if self.player.velocity[0] != 0 or self.player.input_velocity[0] != 0:
-                    self.set_state("walk")
-                else:
-                    self.set_state("idle")
-            elif self.player.velocity[1] < 0:
-                self.set_state("jump")
-        elif self.state == "jump":
-            if self.player.grounded:
-                if self.player.velocity[0] != 0 or self.player.input_velocity[0] != 0:
-                    self.set_state("walk")
-                else:
-                    self.set_state("idle")
-            elif self.player.velocity[1] >= 0:
-                self.set_state("fall")
-        elif self.state == "skid":
-            if self.player.velocity[1] > 0:
-                self.set_state("fall")
-            elif self.player.velocity[1] < 0:
-                self.set_state("jump")
-            elif self.player.velocity[0] * self.player.input_velocity[0] > 0:
-                self.set_state("idle")
-        elif self.state == "climb_idle":
-            if "ladder" not in self.player.near:
-                self.set_state("fall")
-            elif self.player.velocity != [0, 0]:
-                self.set_state("climb_move")
-        elif self.state == "climb_move":
-            if "ladder" not in self.player.near:
-                self.set_state("fall")
-            elif self.player.velocity == [0, 0]:
-                self.set_state("climb_idle")
-
-    def enter_state(self):
-        self.player.state_label = self.player.font.write(self.state.upper())
-        self.player.sprite.play(self.state)
-        if self.state == "dead":
-            self.player.timer = 0
-
-
-class Player(Kinematic):
-    def __init__(self):
-        Kinematic.__init__(self, pg.Rect(0, 0, 12, 16))
-        spritesheet = Spritesheet("assets/mario.png", (16, 24))
-        self.font = Font("assets/font.png", (8,8), "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.,*_")
-        self.sprite = AnimatedSprite(spritesheet, {
+class Player(Kinematic, StateMachine):
+    def __init__(self, position):
+        StateMachine.__init__(self, "idle")
+        Kinematic.__init__(self, (12, 16), position)
+        self.sprite = AnimatedSprite(Spritesheet("assets/mario.png", (16, 24)), {
             "idle": [{"frame": 0, "duration": 1}],
             "walk": [{"frame": 3, "duration": 6}, {"frame": 4, "duration": 6}],
             "run": [{"frame": 3, "duration": 3}, {"frame": 4, "duration": 3}],
@@ -168,19 +98,78 @@ class Player(Kinematic):
             "skid": [{"frame": 13, "duration": 1}],
             "dead": [{"frame": 14, "duration": 6, "frame": 15, "duration": 6}]
         }, "idle")
-
-        self.collisions = []
         self.near = []
-
-        self.input_velocity = [0, 0]
-        self.state = PlayerSM(self)
-        self.state_label = None
+        self.input_velocity = pg.Vector2(0, 0)
         self.timer = None
-        self.walk_max = 1.5
-        self.walk_accel = 0.05
+        self.walk_max_speed = 1.5
+        self.walk_acceleration = 0.05
 
-    def get_collisions(self, tilemap):
-        self.collisions = []
+    def process(self):
+        self.update_state()
+        self.sprite.next()
+
+    def physics(self, dt, tilemap):
+        if self.state != "dead":
+            self.move_and_collide(dt, tilemap)
+            self.get_near(tilemap)
+        else:
+            self.move(dt)
+
+    def input(self, events):
+        self.input_velocity.update(0)
+
+        if self.state in ["climb_idle", "climb_move"]:
+            self.velocity.update(0)
+            if events.is_action_pressed("right"): self.velocity.x = 1
+            if events.is_action_pressed("left"): self.velocity.x = -1
+            if events.is_action_pressed("down"): self.velocity.y = 1
+            if events.is_action_pressed("up"): self.velocity.y = -1
+            if events.is_action_just_pressed("jump"): self.input_velocity.y = -6
+        elif self.state == "dead":
+            self.gravity = False
+            self.timer += 1
+            if self.timer == 60: self.input_velocity.y = -4
+            elif self.timer > 60: self.gravity = True
+            else: self.velocity.update(0)
+        else:
+            if events.is_action_pressed("right"):
+                self.input_velocity.x = self.walk_acceleration
+                self.sprite.flip_h = True
+            elif self.velocity.x > 0:
+                self.velocity.x = max(self.velocity.x - self.walk_acceleration, 0)
+
+            if events.is_action_pressed("left"):
+                self.input_velocity.x = -self.walk_acceleration
+                self.sprite.flip_h = False
+            elif self.velocity.x < 0:
+                self.velocity.x = min(self.velocity.x + self.walk_acceleration, 0)
+
+            if self.grounded and events.is_action_just_pressed("jump"):
+                self.input_velocity.y = -6
+            if events.is_action_just_released("jump"):
+                if self.velocity.y < -3:
+                    self.velocity.y = -3
+
+            if events.is_action_pressed("up") or events.is_action_pressed("down"):
+                if self.is_near("ladder"):
+                    self.set_state("climb_idle")
+
+        self.velocity += self.input_velocity
+        self.velocity.x = utils.clamp(
+            self.velocity[0],
+            -self.walk_max_speed, self.walk_max_speed
+        )
+
+    def draw(self, surface):
+        x = self.shape.x - (self.sprite.texture.get_width() - self.shape.w) / 2
+        y = self.shape.y - (self.sprite.texture.get_height() - self.shape.h)
+        self.sprite.draw(surface, (x, y))
+
+    def is_near(self, tag):
+        return tag in self.near
+
+    def get_near(self, tilemap):
+        self.near = []
         points = [
             self.shape.midtop, self.shape.midbottom,
             self.shape.topleft, self.shape.midleft, self.shape.bottomleft,
@@ -191,94 +180,77 @@ class Player(Kinematic):
             x = point[0] // 16
             y = point[1] // 16
             tile = tilemap.get_info_at(x, y)
-            if tile and tile not in self.collisions:
-                self.collisions.append(tile)
-
-    def check_out_of_bounds(self, tilemap):
+            if tile:
+                if tile.has("ladder"):
+                    self.near.append("ladder")
+                if tile.has("damage"):
+                    self.near.append("damage")
         if self.shape.top > tilemap.size[1]:
-            self.state.set_state("dead")
+            self.near.append("death")
 
-    def draw(self, surface):
-        self.sprite.draw(surface, (self.shape.topleft[0] - 2, self.shape.topleft[1] - 8))
+    def update_state(self):
+        if self.is_near("death") or self.is_near("damage"):
+            self.set_state("dead")
+        if self.state == "idle":
+            if self.velocity.y > 0:
+                self.set_state("fall")
+            elif self.velocity.y < 0:
+                self.set_state("jump")
+            elif self.velocity.x != 0:
+                self.set_state("walk")
+        elif self.state == "walk":
+            if self.velocity.y > 0:
+                self.set_state("fall")
+            elif self.velocity.y < 0:
+                self.set_state("jump")
+            elif self.velocity.x > 0 and self.input_velocity.x < 0:
+                self.set_state("skid")
+            elif self.velocity.x < 0 and self.input_velocity.x > 0:
+                self.set_state("skid")
+            elif self.velocity.x == 0:
+                self.set_state("idle")
+        elif self.state == "fall":
+            if self.grounded:
+                if self.velocity.y != 0 or self.input_velocity.x != 0:
+                    self.set_state("walk")
+                else:
+                    self.set_state("idle")
+            elif self.velocity.y < 0:
+                self.set_state("jump")
+        elif self.state == "jump":
+            if self.grounded:
+                if self.velocity.x != 0 or self.input_velocity.x != 0:
+                    self.set_state("walk")
+                else:
+                    self.set_state("idle")
+            elif self.velocity.y >= 0:
+                self.set_state("fall")
+        elif self.state == "skid":
+            if self.velocity.y > 0:
+                self.set_state("fall")
+            elif self.velocity.y < 0:
+                self.set_state("jump")
+            elif self.velocity.x * self.input_velocity.x >= 0:
+                self.set_state("idle")
+        elif self.state == "climb_idle":
+            if "ladder" not in self.near:
+                self.set_state("fall")
+            elif self.velocity != pg.Vector2(0,0):
+                self.set_state("climb_move")
+        elif self.state == "climb_move":
+            if "ladder" not in self.near:
+                self.set_state("fall")
+            elif self.velocity == pg.Vector2(0,0):
+                self.set_state("climb_idle")
 
-        if self.state_label:
-            surface.blit(self.state_label, (self.shape.midtop[0] - self.state_label.get_width() / 2, self.shape.midtop[1] - self.state_label.get_height() - 2))
+    def enter_state(self):
+        #self.state_label = self.player.font.write(self.state.upper())
+        self.sprite.play(self.state)
+        if self.state in ["climb_move", "climb_idle"]:
+            self.gravity = False
+        elif self.state == "dead":
+            self.timer = 0
 
-    def check_collisions(self):
-        self.near = []
-        for tile in self.collisions:
-            if "damage" in tile.tags:
-                self.state.set_state("dead")
-            if "ladder" in tile.tags and "ladder" not in self.near:
-                self.near.append("ladder")
-        print(self.near, self.collisions)
-
-    def physics(self, dt, tilemap):
-        if self.state.state != "dead":
-            self.move_and_collide(dt, tilemap)
-            self.get_collisions(tilemap)
-            self.check_out_of_bounds(tilemap)
-            self.check_collisions()
-        else:
-            self.move(dt)
-
-    def process(self):
-        self.state.process()
-        self.sprite.next()
-
-    def apply_gravity(self):
-        self.velocity[1] = min(self.velocity[1] + 0.2, 10)
-
-    def input(self, events):
-        self.input_velocity = [0, 0]
-
-        if self.state.state in ["climb_idle", "climb_move"]:
-            self.velocity = [0, 0]
-            if events.is_action_pressed("right"):
-                self.velocity[0] = 1
-            if events.is_action_pressed("left"):
-                self.velocity[0] = -1
-            if events.is_action_pressed("down"):
-                self.velocity[1] = 1
-            if events.is_action_pressed("up"):
-                self.velocity[1] = -1
-            if events.is_action_just_pressed("jump"):
-                self.state.set_state("jump")
-                self.input_velocity[1] = -6
-        elif self.state.state == "dead":
-            self.timer += 1
-            if self.timer == 60:
-                self.input_velocity[1] = -6
-            elif self.timer > 60:
-                self.apply_gravity()
-            else:
-                self.velocity = [0, 0]
-        else:
-            if events.is_action_pressed("right"):
-                self.input_velocity[0] = self.walk_accel
-                self.sprite.flip_h = True
-            elif self.velocity[0] > 0:
-                self.velocity[0] = max(self.velocity[0] - self.walk_accel, 0)
-
-            if events.is_action_pressed("left"):
-                self.input_velocity[0] = -self.walk_accel
-                self.sprite.flip_h = False
-            elif self.velocity[0] < 0:
-                self.velocity[0] = min(self.velocity[0] + self.walk_accel, 0)
-
-            self.apply_gravity()
-
-            if self.grounded and events.is_action_just_pressed("jump"):
-                self.input_velocity[1] = -6
-            if events.is_action_just_released("jump"):
-                if self.velocity[1] < -3:
-                    self.velocity[1] = -3
-
-            if events.is_action_pressed("up") or events.is_action_pressed("down"):
-                if "ladder" in self.near:
-                    self.state.set_state("climb_idle")
-
-
-        self.velocity[0] += self.input_velocity[0]
-        self.velocity[0] = utils.clamp(self.velocity[0], -self.walk_max, self.walk_max)
-        self.velocity[1] += self.input_velocity[1]
+    def exit_state(self):
+        if self.state in ["climb_move", "climb_idle"]:
+            self.gravity = True
