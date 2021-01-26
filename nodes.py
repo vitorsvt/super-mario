@@ -31,21 +31,45 @@ class Font:
         return surface
 
 
+class State:
+    def __init__(self, transitions, states):
+        self.transitions = [state for state in states if state in transitions]
+
+    @staticmethod
+    def check(entity):
+        pass
+
+    def enter(self, entity):
+        pass
+
+    def exit(self, entity):
+        pass
+
+
 class StateMachine:
-    def __init__(self, state):
-        self.state = state
+    def __init__(self, entity, states, state):
+        self.entity = entity
+        self.states = {s.__name__:s(states) for s in states}
+        self.state = self.states[state]
 
-    def set_state(self, state):
-        if self.state != state:
-            self.exit_state()
+    def process(self):
+        for state in self.state.transitions:
+            change_state = state.check(self.entity)
+            if change_state:
+                self.set(state.__name__)
+                break
+
+    def set(self, state_name):
+        state = self.states.get(state_name)
+        if state and self.state != state:
+            self.state.exit(self.entity)
             self.state = state
-            self.enter_state()
+            self.state.enter(self.entity)
 
-    def exit_state(self):
-        pass
-
-    def enter_state(self):
-        pass
+    def current(self, state):
+        if self.state == self.states.get(state):
+            return True
+        return False
 
 
 class Tile:
