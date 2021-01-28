@@ -1,6 +1,5 @@
 import pygame as pg
 
-
 class Root:
     def input(self, events):
         pass
@@ -81,6 +80,17 @@ class Tile:
             for property in properties:
                 if property["type"] == "bool":
                     self.tags.append(property["name"])
+        self.points = []
+        objectgroup = data.get("objectgroup")
+        if objectgroup:
+            for object in objectgroup["objects"]:
+                x = object["x"]
+                y = object["y"]
+                for point in object["polyline"]:
+                    point_x = point["x"]
+                    point_y = point["y"]
+                    point = pg.Vector2((x + point_x - 8) / 8, (y + point_y - 8) / 8)
+                    self.points.append(point)
 
     def has(self, tag):
         return tag in self.tags
@@ -100,29 +110,49 @@ class Tileset:
                 clip = pg.Rect(i, j, size, size)
                 self.tiles.append(self.texture.subsurface(clip))
 
+    @classmethod
+    def from_tiled(cls, data, name):
+        tileset =  next(t for t in data["tilesets"] if t["name"] == name)
+        return cls(
+            tileset["image"], tileset["tilewidth"],
+            tileset["tiles"], tileset["margin"],
+            tileset["spacing"], tileset["transparentcolor"]
+        )
+
 
 class Tilemap:
-    def __init__(self, tileset, size, tiles):
+    def __init__(self, tileset, size, layers):
         self.width, self.height = size
         self.tileset = tileset
-        self.tiles = tiles
+        self.layers = layers
         self.surface = pg.Surface((self.width * tileset.size, self.height * tileset.size), pg.HWSURFACE + pg.SRCALPHA)
         self.size = self.surface.get_size()
 
-        for j in range(self.height):
-            for i in range(self.width):
-                id = self.tiles[i + j * self.width]
-                if id != 0:
-                    tile = tileset.tiles[id - 1]
-                    self.surface.blit(tile, (i * tileset.size, j * tileset.size))
+        for layer in range(len(layers)):
+            for j in range(self.height):
+                for i in range(self.width):
+                    id = self.get_at(i, j, layer)
+                    if id != 0:
+                        tile = tileset.tiles[id - 1]
+                        self.surface.blit(tile, (i * tileset.size, j * tileset.size))
 
-    def get_info_at(self, x, y):
-        return self.get_info(self.get_at(x, y))
+    @classmethod
+    def from_tiled(cls, data):
+        tileset = Tileset.from_tiled(data, "Ground")
+        layers = [l["data"] for l in data["layers"] if l["type"] == "tilelayer"]
+        return cls(
+            tileset,
+            [data["width"], data["height"]],
+            layers
+        )
 
-    def get_at(self, x, y):
+    def get_info_at(self, x, y, layer = 0):
+        return self.get_info(self.get_at(x, y, layer))
+
+    def get_at(self, x, y, layer = 0):
         if 0 > x or x >= self.width or 0 > y or y >= self.height:
             return
-        return self.tiles[y * self.width + x]
+        return self.layers[layer][y * self.width + x]
 
     def get_info(self, tile):
         if tile:
@@ -218,18 +248,17 @@ class Kinematic:
             self.velocity.y = min(self.velocity.y + 0.2, 10)
 
     def move(self, dt):
-        self.position.x += self.velocity[0]
+        self.position += self.velocity
         self.shape.x = int(self.position.x)
-        self.position.y += self.velocity[1]
         self.shape.y = int(self.position.y)
 
-    def move_and_collide(self, dt, tilemap):
-        self.colliding = []
+    def move_and_collide(self, dt, tilemap, entities = []):
+        rects = [entity.shape.copy() for entity in entities]
 
-        self.position.x += self.velocity[0]
+        self.position.x += self.velocity.x
         self.shape.x = int(self.position.x)
 
-        if self.velocity[0] > 0:
+        if self.velocity.x > 0:
             points = [self.shape.topright, self.shape.midright, self.shape.bottomright]
             for point in points:
                 x = point[0] // 16
@@ -239,7 +268,7 @@ class Kinematic:
                     if self.shape.right >= x * 16 and self.shape.bottom != y * 16 and self.shape.top != y * 16 + 16:
                         self.shape.right = x * 16
                         self.position.x = self.shape.x
-                        self.velocity[0] = 0
+                        self.velocity.x = 0
 
         else:
             points = [self.shape.topleft, self.shape.midleft, self.shape.bottomleft]
@@ -251,14 +280,55 @@ class Kinematic:
                     if self.shape.left <= x * 16 + 16 and self.shape.bottom != y * 16 and self.shape.top != y * 16 + 16:
                         self.shape.left = x * 16 + 16
                         self.position.x = self.shape.x
-                        self.velocity[0] = 0
+                        self.velocity.x = 0
 
-        self.position.y += self.velocity[1]
+        shape = self.shape.copy()
+        shape.y += 4
+        shape.h -= 8
+        index = shape.collidelist(rects)
+        if index != -1:
+            rect = rects[index]
+            entity = entities[index]
+            if entity.velocity.x > 0:
+                if self.shape.x > rect.x:
+                    self.shape.left = rect.right
+                    self.position.x = self.shape.x
+                    if self.velocity.x <= 0:
+                        self.velocity.x = 0
+                    else:
+                        self.velocity.x = entity.velocity.x
+                else:
+                    self.shape.right = rect.left
+                    self.position.x = self.shape.x
+                    self.velocity.x = entity.velocity.x
+            elif entity.velocity.x < 0:
+                if self.shape.x > rect.x:
+                    self.shape.left = rect.right
+                    self.position.x = self.shape.x
+                    self.velocity.x = entity.velocity.x
+                else:
+                    self.shape.right = rect.left
+                    self.position.x = self.shape.x
+                    if self.velocity.x >= 0:
+                        self.velocity.x = 0
+                    else:
+                        self.velocity.x = entity.velocity.x
+            else:
+                if self.shape.x > rect.x:
+                    self.shape.left = rect.right
+                    self.position.x = self.shape.x
+                    self.velocity.x = 0
+                else:
+                    self.shape.right = rect.left
+                    self.position.x = self.shape.x
+                    self.velocity.x = 0
+
+        self.position.y += self.velocity.y
         self.shape.y = int(self.position.y)
         snap = self.grounded
         self.grounded = False
 
-        if self.velocity[1] > 0:
+        if self.velocity.y > 0:
             points = [self.shape.bottomleft, self.shape.midbottom, self.shape.bottomright]
             for point in points:
                 x = point[0] // 16
@@ -274,12 +344,12 @@ class Kinematic:
                         self.shape.bottom = y * 16
                         self.grounded = True
                         self.position.y = self.shape.y
-                        self.velocity[1] = 0
+                        self.velocity.y = 0
                     elif tile.type == "semisolid" and y * 16 + 8 >= bottom >= y * 16 and self.shape.right != x * 16 and self.shape.left != x * 16 + 16:
                         self.shape.bottom = y * 16
                         self.grounded = True
                         self.position.y = self.shape.y
-                        self.velocity[1] = 0
+                        self.velocity.y = 0
 
         else:
             points = [self.shape.topleft, self.shape.midtop, self.shape.topright]
@@ -291,4 +361,52 @@ class Kinematic:
                     if self.shape.top <= y * 16 + 16 and self.shape.right != x * 16 and self.shape.left != x * 16 + 16:
                         self.shape.top = y * 16 + 16
                         self.position.y = self.shape.y
-                        self.velocity[1] = 0
+                        self.velocity.y = 1
+
+        shape = self.shape.copy()
+        shape.x += 4
+        shape.w -= 8
+        if snap: shape.h += 4
+        index = shape.collidelist(rects)
+        if index != -1:
+            rect = rects[index]
+            entity = entities[index]
+            if entity.velocity.y > 0:
+                if self.shape.y > rect.y:
+                    self.shape.top = rect.bottom
+                    self.position.y = self.shape.y
+                    if self.velocity.y <= 0:
+                        self.velocity.y = 0
+                    else:
+                        self.velocity.y = entity.velocity.y
+                else:
+                    self.shape.bottom = rect.top
+                    self.position.y = self.shape.y
+                    self.grounded = True
+                    self.velocity.y = entity.velocity.y
+            elif entity.velocity.y < 0:
+                if self.shape.y > rect.y:
+                    self.shape.top = rect.bottom
+                    self.position.y = self.shape.y
+                    self.velocity.y = entity.velocity.y
+                else:
+                    self.shape.bottom = rect.top
+                    self.position.y = self.shape.y
+                    self.grounded = True
+                    if self.velocity.y >= 0:
+                        self.velocity.y = 0
+                    else:
+                        self.velocity.y = entity.velocity.y
+            else:
+                if self.shape.y > rect.y:
+                    self.shape.top = rect.bottom
+                    self.position.y = self.shape.y
+                    self.velocity.y = 0
+                else:
+                    self.shape.bottom = rect.top
+                    self.position.y = self.shape.y
+                    self.grounded = True
+                    self.velocity.y = 0
+            if self.grounded:
+                self.position.x += entity.velocity.x
+                self.shape.x = int(self.position.x)

@@ -1,5 +1,5 @@
 import pygame as pg
-import utils
+import utils, math
 from nodes import Root, Tileset, Tilemap, Kinematic, AnimatedSprite, Spritesheet, Camera, StateMachine, Font
 from states import Walk, Idle, Jump, Fall, ClimbIdle, ClimbMove, Skid, Dead
 
@@ -24,6 +24,7 @@ class FollowCamera(Camera):
             if not self.fixed: self.fixed = "right"
             else: self.fixed = "left"
 
+        self.shape.centery = round(self.target.shape.y)
         if self.fixed == "left":
             if self.target.shape.left >= self.shape.x + self.margins[1]:
                 distance = self.target.shape.left - self.margins[1] - self.shape.x
@@ -38,9 +39,11 @@ class FollowCamera(Camera):
 
 
 class Level(Root):
-    def __init__(self, file):
-        self.tilemap, player = self.load_tiled(file)
-        self.player = Player((player[0], player[1]))
+    def __init__(self, tilemap, player, entities = [], track = []):
+        self.tilemap = tilemap
+        self.track = track
+        self.player = player
+        self.entity = entities
         self.camera = FollowCamera(self.player, (256, 224), self.tilemap.size)
 
         self.surface = pg.Surface(self.tilemap.size, pg.HWSURFACE + pg.SRCALPHA)
@@ -48,29 +51,34 @@ class Level(Root):
 
         self.surface.blit(self.tilemap.surface, (0, 0))
 
-    def load_tiled(self, file):
-        data = utils.load_json(file)
-        tileset_data = data["tilesets"][0]
-        tileset = Tileset(
-            tileset_data["image"], tileset_data["tilewidth"],
-            tileset_data["tiles"], tileset_data["margin"],
-            tileset_data["spacing"], tileset_data["transparentcolor"]
-        )
-        tilemap_data = data["layers"][0]
-        tilemap = Tilemap(
-            tileset,
-            [tilemap_data["width"], tilemap_data["height"]],
-            tilemap_data["data"]
-        )
-        player = data["layers"][1]["objects"][0]
-        return tilemap, (player["x"], player["y"])
+    @classmethod
+    def from_tiled(cls, file):
+        level = utils.load_json(file)
+
+        entities = next(l for l in level["layers"] if l["name"] == "Entities")
+        player = next(e for e in entities["objects"] if e["name"] == "Player")
+
+        track_data = next(l for l in level["layers"] if l["name"] == "Tracks")
+        track = [pg.Vector2(p["x"] + track_data["objects"][0]["x"], p["y"] + track_data["objects"][0]["y"]) for p in track_data["objects"][0]["polyline"]]
+
+        tilemap = Tilemap.from_tiled(level)
+        player = Player((player["x"], player["y"]))
+        blocks = [
+            Block(
+                (e["x"], e["y"]), tilemap.tileset.tiles[e["gid"] - 1]
+            ) for e in entities["objects"] if e["type"] == "solid"
+        ]
+        return cls(tilemap, player, blocks, track)
 
     def input(self, events):
         self.player.input(events)
 
     def physics(self, dt):
+        for entity in self.entity:
+            entity.apply_gravity()
+            entity.physics(dt, self.tilemap, self.track)
         self.player.apply_gravity()
-        self.player.physics(dt, self.tilemap)
+        self.player.physics(dt, self.tilemap, self.entity)
 
     def process(self):
         self.player.process()
@@ -79,8 +87,88 @@ class Level(Root):
     def draw(self, surface):
         surface.fill((0,120,255))
         self.entities.fill((0, 0, 0, 0))
+        for entity in self.entity:
+            entity.draw(self.entities)
         self.player.draw(self.entities)
         self.camera.draw(surface, [self.surface, self.entities])
+
+
+class Block(Kinematic):
+    def __init__(self, position, sprite):
+        Kinematic.__init__(self, (16, 16), position, False)
+        self.sprite = sprite
+        self.forward = True
+        self.index = None
+        self.point = None
+        self.speed = 1
+
+    def physics(self, dt, tilemap, track):
+        self.update(track)
+        if self.gravity:
+            self.move_and_collide(dt, tilemap)
+        else:
+            self.move(dt)
+
+    def update(self, path):
+        center = self.position + pg.Vector2(self.shape.w / 2, self.shape.h / 2)
+
+        if not self.point:
+            if center in path:
+                self.point = center
+                self.index = path.index(center)
+
+        if self.forward:
+            if self.index + 1 >= len(path):
+                self.gravity = True
+            else:
+                next_index = self.index + 1
+                next = path[next_index]
+                direction = next - center
+                self.velocity = direction if direction.length() <= self.speed else direction.normalize() * self.speed
+                if center + self.velocity == next:
+                    self.point = next
+                    self.index = next_index
+
+        """
+        gravity = True
+
+        x, y = self.shape.centerx // 16, self.shape.centery // 16
+        center = pg.Vector2(x * 16 + 8, y * 16 + 8)
+        tile = tilemap.get_info_at(x, y, 1)
+        if not tile:
+            x, y = (self.shape.centerx - int(self.direction.x)) // 16, (self.shape.centery - int(self.direction.y)) // 16
+            center = pg.Vector2(x * 16 + 8, y * 16 + 8)
+            tile = tilemap.get_info_at(x, y, 1)
+
+        if tile:
+            if tile.type == "track":
+                if self.gravity:
+                    if abs(self.shape.centery - center.y) <= int(self.velocity.y):
+                        gravity = False
+                        self.shape.centery = center.y
+                        self.position.y = self.shape.y
+                else:
+                    if (
+                        self.shape.centerx == center.x or self.shape.centery == center.y
+                    ) or (
+                        abs(self.shape.centerx - center.x) == abs(self.shape.centery - center.y)
+                    ):
+                        gravity = False
+
+                if self.shape.center == center:
+                    if tile.has("bounce"):
+                        if self.direction == pg.Vector2(0):
+                            self.direction = next(point for point in tile.points if point != pg.Vector2(0))
+                        else:
+                            self.direction = -self.direction
+                    else:
+                        self.direction = next(point for point in tile.points if point != -self.direction)
+
+        self.gravity = gravity
+        """
+
+    def draw(self, surface):
+        surface.blit(self.sprite, self.shape.topleft)
 
 
 class Player(Kinematic):
@@ -109,9 +197,9 @@ class Player(Kinematic):
         self.state.process()
         self.sprite.next()
 
-    def physics(self, dt, tilemap):
+    def physics(self, dt, tilemap, entities):
         if not self.state.current("Dead"):
-            self.move_and_collide(dt, tilemap)
+            self.move_and_collide(dt, tilemap, entities)
             self.get_near(tilemap)
         else:
             self.move(dt)

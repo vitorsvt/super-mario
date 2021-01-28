@@ -72,7 +72,7 @@ class Fall(State):
     def check(entity):
         if entity.state.current("ClimbIdle") or entity.state.current("ClimbMove"):
             return not entity.is_near("ladder")
-        return entity.velocity.y > 0
+        return not entity.grounded and entity.velocity.y > 0
 
     def enter(self, entity):
         entity.sprite.play("fall")

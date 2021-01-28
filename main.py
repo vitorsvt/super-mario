@@ -4,8 +4,8 @@ from game import Level
 
 
 def main():
-    engine = Engine((256, 224), 3)
-    level = Level("level.json")
+    engine = Engine((256, 224), 2)
+    level = Level.from_tiled("level.json")
     engine.root = level
     engine.start()
 
