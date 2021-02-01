@@ -1,5 +1,5 @@
 import pygame as pg
-import time, sys
+import sys
 
 
 class Engine:

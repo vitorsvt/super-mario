@@ -111,15 +111,17 @@ class Block(Kinematic):
 
     def update(self, path):
         center = self.position + pg.Vector2(self.shape.w / 2, self.shape.h / 2)
+        rounded_center = pg.Vector2((self.position.x // 16) * 16 + 8, (self.position.y // 16) * 16 + 8)
 
         if not self.point:
-            if center in path:
-                self.point = center
-                self.index = path.index(center)
+            if rounded_center in path:
+                self.point = rounded_center
+                self.index = path.index(rounded_center)
 
         if self.forward:
             if self.index + 1 >= len(path):
                 self.gravity = True
+                self.point = None
             else:
                 next_index = self.index + 1
                 next = path[next_index]
@@ -128,44 +130,6 @@ class Block(Kinematic):
                 if center + self.velocity == next:
                     self.point = next
                     self.index = next_index
-
-        """
-        gravity = True
-
-        x, y = self.shape.centerx // 16, self.shape.centery // 16
-        center = pg.Vector2(x * 16 + 8, y * 16 + 8)
-        tile = tilemap.get_info_at(x, y, 1)
-        if not tile:
-            x, y = (self.shape.centerx - int(self.direction.x)) // 16, (self.shape.centery - int(self.direction.y)) // 16
-            center = pg.Vector2(x * 16 + 8, y * 16 + 8)
-            tile = tilemap.get_info_at(x, y, 1)
-
-        if tile:
-            if tile.type == "track":
-                if self.gravity:
-                    if abs(self.shape.centery - center.y) <= int(self.velocity.y):
-                        gravity = False
-                        self.shape.centery = center.y
-                        self.position.y = self.shape.y
-                else:
-                    if (
-                        self.shape.centerx == center.x or self.shape.centery == center.y
-                    ) or (
-                        abs(self.shape.centerx - center.x) == abs(self.shape.centery - center.y)
-                    ):
-                        gravity = False
-
-                if self.shape.center == center:
-                    if tile.has("bounce"):
-                        if self.direction == pg.Vector2(0):
-                            self.direction = next(point for point in tile.points if point != pg.Vector2(0))
-                        else:
-                            self.direction = -self.direction
-                    else:
-                        self.direction = next(point for point in tile.points if point != -self.direction)
-
-        self.gravity = gravity
-        """
 
     def draw(self, surface):
         surface.blit(self.sprite, self.shape.topleft)
