@@ -1,5 +1,5 @@
 import pygame as pg
-import utils, math
+import utils, random
 from nodes import Root, Tileset, Tilemap, Kinematic, AnimatedSprite, Spritesheet, Camera, StateMachine, Font
 from states import Walk, Idle, Jump, Fall, ClimbIdle, ClimbMove, Skid, Dead
 
@@ -67,7 +67,7 @@ class Level(Root):
             Block(
                 (e["x"], e["y"]), tilemap.tileset.tiles[e["gid"] - 1]
             ) for e in entities["objects"] if e["type"] == "solid"
-        ]
+        ] + [Goomba((196, 144))]
         return cls(tilemap, player, blocks, track)
 
     def input(self, events):
@@ -76,11 +76,17 @@ class Level(Root):
     def physics(self, dt):
         for entity in self.entity:
             entity.apply_gravity()
-            entity.physics(dt, self.tilemap, self.track)
+            if isinstance(entity, Block):
+                entity.physics(dt, self.tilemap, self.track)
+            else:
+                entity.physics(dt, self.tilemap, self.entity)
         self.player.apply_gravity()
         self.player.physics(dt, self.tilemap, self.entity)
 
     def process(self):
+        for entity in self.entity:
+            if isinstance(entity, Goomba):
+                entity.process()
         self.player.process()
         self.camera.process()
 
@@ -135,6 +141,51 @@ class Block(Kinematic):
         surface.blit(self.sprite, self.shape.topleft)
 
 
+class Goomba(Kinematic):
+    def __init__(self, position, moving_right=True):
+        Kinematic.__init__(self, (16, 16), position)
+        self.sprite = AnimatedSprite(Spritesheet("assets/goomba.png", (16, 16)), {
+            "walk": [{"frame": 0, "duration": 10}, {"frame": 1, "duration": 10}]
+        }, "walk")
+        self.moving_right = not moving_right
+        self.walk_speed = 1.0
+        self.enabled = True
+        self.dead = False
+
+    def process(self):
+        self.sprite.next()
+
+    def physics(self, dt, tilemap, entities):
+        if self.enabled:
+            if self.velocity.x == 0:
+                self.moving_right = not self.moving_right
+                self.sprite.flip_h = not self.sprite.flip_h
+            if self.moving_right:
+                self.velocity.x = 1
+            else:
+                self.velocity.x = -1
+            self.move_and_collide(dt, tilemap, entities)
+        elif self.dead:
+            self.enabled_collisions = False
+            self.move(dt)
+
+    def draw(self, surface):
+        x = self.shape.x - (self.sprite.texture.get_width() - self.shape.w) / 2
+        y = self.shape.y - (self.sprite.texture.get_height() - self.shape.h)
+        self.sprite.draw(surface, (x, y))
+
+    def kill(self):
+        if self.enabled:
+            self.sprite.flip_v = True
+            self.velocity.x = 0
+            self.enabled = False
+        elif not self.dead:
+            self.dead = True
+            self.velocity.y = -5
+            self.velocity.x = random.randint(-1, 1)
+            print(self.velocity.x)
+
+
 class Player(Kinematic):
     def __init__(self, position):
         Kinematic.__init__(self, (12, 16), position)
@@ -158,6 +209,19 @@ class Player(Kinematic):
         self.walk_acceleration = 0.05
 
     def process(self):
+        top = self.colliding.get("top")
+        bottom = self.colliding.get("bottom")
+        left = self.colliding.get("left")
+        right = self.colliding.get("right")
+        if isinstance(bottom, Goomba) and not bottom.dead:
+            bottom.kill()
+            self.state.set("Jump")
+            self.velocity.y = -5
+        if isinstance(right, Goomba) or isinstance(left, Goomba) or isinstance(top, Goomba):
+            entity = right or left or top
+            if entity.enabled:
+                self.state.set("Dead")
+
         self.state.process()
         self.sprite.next()
 

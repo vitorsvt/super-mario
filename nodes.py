@@ -176,9 +176,10 @@ class Sprite:
     def __init__(self, texture):
         self.texture = pg.image.load(texture).convert_alpha() if texture else None
         self.flip_h = False
+        self.flip_v = False
 
     def draw(self, surface, position = (0, 0)):
-        surface.blit(pg.transform.flip(self.texture, self.flip_h, False), position)
+        surface.blit(pg.transform.flip(self.texture, self.flip_h, self.flip_v), position)
 
 
 class AnimatedSprite(Sprite):
@@ -242,6 +243,8 @@ class Kinematic:
         self.velocity = pg.Vector2(0)
         self.grounded = False
         self.gravity = gravity
+        self.colliding = {}
+        self.enabled_collisions = True
 
     def apply_gravity(self):
         if self.gravity:
@@ -253,7 +256,8 @@ class Kinematic:
         self.shape.y = int(self.position.y)
 
     def move_and_collide(self, dt, tilemap, entities = []):
-        rects = [entity.shape.copy() for entity in entities]
+        self.colliding = {}
+        rects = [entity.shape.copy() if entity.shape is not self.shape and entity.enabled_collisions else pg.Rect(0,0,0,0) for entity in entities]
 
         self.position.x += self.velocity.x
         self.shape.x = int(self.position.x)
@@ -297,15 +301,18 @@ class Kinematic:
                         self.velocity.x = 0
                     else:
                         self.velocity.x = entity.velocity.x
+                    self.colliding["left"] = entity
                 else:
                     self.shape.right = rect.left
                     self.position.x = self.shape.x
                     self.velocity.x = entity.velocity.x
+                    self.colliding["right"] = entity
             elif entity.velocity.x < 0:
                 if self.shape.x > rect.x:
                     self.shape.left = rect.right
                     self.position.x = self.shape.x
                     self.velocity.x = entity.velocity.x
+                    self.colliding["left"] = entity
                 else:
                     self.shape.right = rect.left
                     self.position.x = self.shape.x
@@ -313,15 +320,18 @@ class Kinematic:
                         self.velocity.x = 0
                     else:
                         self.velocity.x = entity.velocity.x
+                    self.colliding["right"] = entity
             else:
                 if self.shape.x > rect.x:
                     self.shape.left = rect.right
                     self.position.x = self.shape.x
                     self.velocity.x = 0
+                    self.colliding["left"] = entity
                 else:
                     self.shape.right = rect.left
                     self.position.x = self.shape.x
                     self.velocity.x = 0
+                    self.colliding["right"] = entity
 
         self.position.y += self.velocity.y
         self.shape.y = int(self.position.y)
@@ -379,16 +389,19 @@ class Kinematic:
                         self.velocity.y = 0
                     else:
                         self.velocity.y = entity.velocity.y
+                    self.colliding["top"] = entity
                 else:
                     self.shape.bottom = rect.top
                     self.position.y = self.shape.y
                     self.grounded = True
                     self.velocity.y = entity.velocity.y
+                    self.colliding["bottom"] = entity
             elif entity.velocity.y < 0:
                 if self.shape.y > rect.y:
                     self.shape.top = rect.bottom
                     self.position.y = self.shape.y
                     self.velocity.y = entity.velocity.y
+                    self.colliding["top"] = entity
                 else:
                     self.shape.bottom = rect.top
                     self.position.y = self.shape.y
@@ -397,16 +410,19 @@ class Kinematic:
                         self.velocity.y = 0
                     else:
                         self.velocity.y = entity.velocity.y
+                    self.colliding["bottom"] = entity
             else:
                 if self.shape.y > rect.y:
                     self.shape.top = rect.bottom
                     self.position.y = self.shape.y
                     self.velocity.y = 0
+                    self.colliding["top"] = entity
                 else:
                     self.shape.bottom = rect.top
                     self.position.y = self.shape.y
                     self.grounded = True
                     self.velocity.y = 0
+                    self.colliding["bottom"] = entity
             if self.grounded:
                 self.position.x += entity.velocity.x
                 self.shape.x = int(self.position.x)
